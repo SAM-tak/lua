@@ -24,18 +24,118 @@
 #include "ltable.h"
 #include "lzio.h"
 
+#define LUA_UTF8 0
 
-static int mbnext(ZIO *z, int lookahead)
-{
+#if LUA_UTF8
+
+static size_t utf8toutf32(int *utf32, const char *utf8, size_t size) {
+  if(utf8[0] < 0x80) {
+    if(utf32) *utf32 = utf8[0];
+    return 1;
+  }
+  else if(utf8[0] > 0xBF) return -1;
+  else if(size < 2) return -2;
+  else if(0xC0 <= utf8[1] && utf8[1] < 0xE0) {
+    if(utf32) *utf32 = ((utf8[0]<<6)&0x1F)|(utf8[1]&0x3F);
+    return 2;
+  }
+  else if(utf8[1] < 0x80 || utf8[1] > 0xBF) return -1;
+  else if(size < 3) return -2;
+  else if(0xE0 <= utf8[2] && utf8[2] < 0xF0) {
+    if(utf32) *utf32 = ((utf8[0]<<12)&0xF)|((utf8[1]<<6)&0x3F)|(utf8[2]&0x3F);
+    return 2;
+  }
+  else if(utf8[2] < 0x80 || utf8[2] > 0xBF) return -1;
+  else if(size < 4) return -2;
+  else if(0xF0 <= utf8[3] && utf8[3] < 0xF8) {
+    if(utf32) *utf32 = ((utf8[0]<<18)&0x7)|((utf8[1]<<12)&0x3F)|((utf8[2]<<6)&0x3F)|(utf8[3]&0x3F);
+    return 2;
+  }
+  else return -1;
+}
+
+static size_t utf32toutf8(char *utf8, const int utf32) {
+  if (utf32 < 0xF0) {
+    utf8[0] = utf32;
+    utf8[1] = 0;
+    return 1;
+  }
+  else if (utf32 < 0x800) {
+    utf8[0] = 0x80 | (utf32 & 0x3F);
+    utf8[1] = 0xC0 | (utf32 >> 6);
+    utf8[2] = 0;
+    return 2;
+  }
+  else if (utf32 < 0x10000) {
+    utf8[0] = 0x80 | (utf32 & 0x3F);
+    utf8[1] = 0x80 | ((utf32 >> 6) & 0x3F);
+    utf8[2] = 0xE0 | (utf32 >> 12);
+    utf8[3] = 0;
+    return 3;
+  }
+  else if (utf32 < 0x110000) {
+    utf8[0] = 0x80 | (utf32 & 0x3F);
+    utf8[1] = 0x80 | ((utf32 >> 6) & 0x3F);
+    utf8[2] = 0x80 | ((utf32 >> 12) & 0x3F);
+    utf8[3] = 0xF0 | (utf32 >> 18);
+    utf8[4] = 0;
+    return 4;
+  }
+  else return -1;
+}
+
+static size_t utf8len(const char *utf8, size_t size) {
+  return utf8toutf32(0, utf8, size);
+}
+
+static int utf8next(ZIO *z, int lookahead) {
+  char s[5];
+  int l;
+  if(lookahead == EOZ) return lookahead;
+  memset(s, 0, sizeof(s));
+  s[0] = cast(char, lookahead);
+  l = (int)utf8len(s, 1);
+  if(l >= 0) {
+    int c;
+    if(utf8toutf32(&c, s, cast(size_t, l))==1) return c;
+  }
+  else if(l == -2) {
+    int i;
+    for(i = 1; i < 5; i++) {
+      s[i] = zgetc(z);
+      l = (int)utf8len(s, i+1);
+      if(l == 0) return 0;
+      else if(l > 0) {
+        int c;
+        if(utf8toutf32(&c, s, cast(size_t, l)) == cast(size_t, l))
+          return c;
+        else
+          break;
+      }
+      else if(l == -1) break;
+    }
+  }
+  return '?';
+}
+#endif
+
+static int mbnext(ZIO *z, int lookahead) {
   char s[MB_LEN_MAX];
   mbstate_t mbs;
   int l;
   if(lookahead == EOZ) return lookahead;
+#if LUA_UTF8
+  if(strcmp(setlocale(LC_CTYPE, 0), "C")) return utf8next(z, lookahead);
+#endif
   memset(s, 0, sizeof(s));
   memset(&mbs, 0, sizeof(mbs));
   s[0] = cast(char, lookahead);
   l = (int)mbrlen(s, 1, &mbs);
-  if(l >= 0) return lookahead;
+  if(l >= 0) {
+    wchar_t c;
+    memset(&mbs, 0, sizeof(mbs));
+    if(mbrtowc(&c, s, cast(size_t, l), &mbs)==1) return cast(int, c);
+  }
   else if(l == -2) {
     int i;
     for(i = 1; i < MB_LEN_MAX; i++) {
@@ -79,15 +179,24 @@ static const char *const luaX_tokens [] = {
 
 static l_noret lexerror (LexState *ls, const char *msg, int token);
 
-
 static void save (LexState *ls, int c) {
   Mbuffer *b = ls->buff;
   int n, i;
-  char s[MB_LEN_MAX+1];
+  char s[MB_LEN_MAX+1 > 5 ? MB_LEN_MAX+1 : 5];
   mbstate_t mbs;
   memset(s, 0, sizeof(s));
+#if LUA_UTF8
+  if(strcmp(setlocale(LC_CTYPE, 0), "C")) {
+    n = (int)utf32toutf8(s, c);
+  }
+  else {
+    memset(&mbs, 0, sizeof(mbs));
+    n = (int)wcrtomb(s, cast(wchar_t, c), &mbs);
+  }
+#else
   memset(&mbs, 0, sizeof(mbs));
   n = (int)wcrtomb(s, cast(wchar_t, c), &mbs);
+#endif
   if(n <= 0) n = 1;
   if (luaZ_bufflen(b) + n > luaZ_sizebuffer(b)) {
     size_t newsize;
@@ -112,11 +221,21 @@ void luaX_init (lua_State *L) {
 
 const char *luaX_token2str (LexState *ls, int token) {
   if (token < FIRST_RESERVED) {  /* single-byte symbols? */
-    char s[MB_LEN_MAX+1];
+    char s[MB_LEN_MAX+1 > 5 ? MB_LEN_MAX+1 : 5];
 	mbstate_t mbs;
     memset(s, 0, sizeof(s));
+#if LUA_UTF8
+    if(strcmp(setlocale(LC_CTYPE, 0), "C")) {
+      utf32toutf8(s, token);
+    }
+    else {
+      memset(&mbs, 0, sizeof(mbs));
+      wcrtomb(s, cast(wchar_t, token), &mbs);
+    }
+#else
     memset(&mbs, 0, sizeof(mbs));
     wcrtomb(s, cast(wchar_t, token), &mbs);
+#endif
     return (lisprint(token)) ? luaO_pushfstring(ls->L, LUA_QL("%s"), s) :
                               luaO_pushfstring(ls->L, "char(%d)", token);
   }

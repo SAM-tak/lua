@@ -11,7 +11,7 @@
 #include "lzio.h"
 
 
-#define FIRST_RESERVED	INT_MAX-63
+#define FIRST_RESERVED	(INT_MAX-63)
 
 
 

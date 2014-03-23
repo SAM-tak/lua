@@ -80,14 +80,14 @@ LUAI_DDEC const lu_byte luai_ctype_[UCHAR_MAX + 2];
 #include <ctype.h>
 
 
-#define lislalpha(c)	(isalpha(c) || (c) == '_')
-#define lislalnum(c)	(isalnum(c) || (c) == '_')
-#define lisdigit(c)	(isdigit(c))
-#define lisspace(c)	(isspace(c))
-#define lisprint(c)	(isprint(c))
-#define lisxdigit(c)	(isxdigit(c))
+#define lislalpha(c) (iswalpha((wchar_t)c) || (c) == '_')
+#define lislalnum(c) (iswalnum((wchar_t)c) || (c) == '_')
+#define lisdigit(c)  (iswdigit((wchar_t)c))
+#define lisspace(c)  (iswspace((wchar_t)c))
+#define lisprint(c)  (iswprint((wchar_t)c))
+#define lisxdigit(c) (iswxdigit((wchar_t)c))
 
-#define ltolower(c)	(tolower(c))
+#define ltolower(c)  ((int)towlower((wchar_t)c))
 
 #endif			/* } */
 

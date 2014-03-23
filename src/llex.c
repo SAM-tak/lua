@@ -28,21 +28,25 @@
 static int mbnext(ZIO *z, int lookahead)
 {
   char s[MB_LEN_MAX];
+  mbstate_t mbs;
   int l;
   if(lookahead == EOZ) return lookahead;
   memset(s, 0, sizeof(s));
+  memset(&mbs, 0, sizeof(mbs));
   s[0] = cast(char, lookahead);
-  l = (int)mbrlen(s, 1, NULL);
+  l = (int)mbrlen(s, 1, &mbs);
   if(l >= 0) return lookahead;
   else if(l == -2) {
     int i;
     for(i = 1; i < MB_LEN_MAX; i++) {
       s[i] = zgetc(z);
-      l = (int)mbrlen(s, i+1, NULL);
+	  memset(&mbs, 0, sizeof(mbs));
+      l = (int)mbrlen(s, i+1, &mbs);
       if(l == 0) return 0;
       else if(l > 0) {
         wchar_t c;
-        if(mbrtowc(&c, s, cast(size_t, l), NULL) == cast(size_t, l))
+		memset(&mbs, 0, sizeof(mbs));
+        if(mbrtowc(&c, s, cast(size_t, l), &mbs) == cast(size_t, l))
           return cast(int, c);
         else
           break;
@@ -80,8 +84,10 @@ static void save (LexState *ls, int c) {
   Mbuffer *b = ls->buff;
   int n, i;
   char s[MB_LEN_MAX+1];
+  mbstate_t mbs;
   memset(s, 0, sizeof(s));
-  n = (int)wcrtomb(s, cast(wchar_t, c), NULL);
+  memset(&mbs, 0, sizeof(mbs));
+  n = (int)wcrtomb(s, cast(wchar_t, c), &mbs);
   if(n <= 0) n = 1;
   if (luaZ_bufflen(b) + n > luaZ_sizebuffer(b)) {
     size_t newsize;
@@ -107,8 +113,10 @@ void luaX_init (lua_State *L) {
 const char *luaX_token2str (LexState *ls, int token) {
   if (token < FIRST_RESERVED) {  /* single-byte symbols? */
     char s[MB_LEN_MAX+1];
+	mbstate_t mbs;
     memset(s, 0, sizeof(s));
-    wcrtomb(s, cast(wchar_t, token), NULL);
+    memset(&mbs, 0, sizeof(mbs));
+    wcrtomb(s, cast(wchar_t, token), &mbs);
     return (lisprint(token)) ? luaO_pushfstring(ls->L, LUA_QL("%s"), s) :
                               luaO_pushfstring(ls->L, "char(%d)", token);
   }

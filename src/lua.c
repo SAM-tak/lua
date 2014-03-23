@@ -120,6 +120,7 @@ static void print_usage (const char *badoption) {
   "  -l name  require library " LUA_QL("name") "\n"
   "  -v       show version information\n"
   "  -E       ignore environment variables\n"
+  "  -L       set default locale\n"
   "  --       stop handling options\n"
   "  -        stop handling options and execute stdin\n"
   ,
@@ -351,8 +352,9 @@ static int handle_script (lua_State *L, char **argv, int n) {
 #define has_v		1	/* -v */
 #define has_e		2	/* -e */
 #define has_E		3	/* -E */
+#define has_L		4	/* -L */
 
-#define num_has		4	/* number of 'has_*' */
+#define num_has		5	/* number of 'has_*' */
 
 
 static int collectargs (char **argv, int *args) {
@@ -368,6 +370,9 @@ static int collectargs (char **argv, int *args) {
         return i;
       case 'E':
         args[has_E] = 1;
+        break;
+      case 'L':
+        args[has_L] = 1;
         break;
       case 'i':
         noextrachars(argv[i]);
@@ -441,7 +446,7 @@ static int pmain (lua_State *L) {
   char **argv = (char **)lua_touserdata(L, 2);
   int script;
   int args[num_has];
-  args[has_i] = args[has_v] = args[has_e] = args[has_E] = 0;
+  args[has_i] = args[has_v] = args[has_e] = args[has_E] = args[has_L] = 0;
   if (argv[0] && argv[0][0]) progname = argv[0];
   script = collectargs(argv, args);
   if (script < 0) {  /* invalid arg? */
@@ -453,6 +458,7 @@ static int pmain (lua_State *L) {
     lua_pushboolean(L, 1);  /* signal for libraries to ignore env. vars. */
     lua_setfield(L, LUA_REGISTRYINDEX, "LUA_NOENV");
   }
+  if (args[has_L]) printf("set default locale : %s\n", setlocale(LC_CTYPE, ""));
   /* open standard libraries */
   luaL_checkversion(L);
   lua_gc(L, LUA_GCSTOP, 0);  /* stop collector during initialization */
@@ -485,7 +491,6 @@ int main (int argc, char **argv) {
     l_message(argv[0], "cannot create state: not enough memory");
     return EXIT_FAILURE;
   }
-  setlocale(LC_CTYPE, "");
   /* call 'pmain' in protected mode */
   lua_pushcfunction(L, &pmain);
   lua_pushinteger(L, argc);  /* 1st argument */

@@ -7,6 +7,7 @@
 
 #include <locale.h>
 #include <string.h>
+#include <wchar.h>
 
 #define llex_c
 #define LUA_CORE
@@ -24,8 +25,34 @@
 #include "lzio.h"
 
 
-
-#define next(ls) (ls->current = zgetc(ls->z))
+static int mbnext(ZIO *z, int lookahead)
+{
+  char s[MB_LEN_MAX];
+  int l;
+  if(lookahead == EOZ) return lookahead;
+  memset(s, 0, sizeof(s));
+  s[0] = cast(char, lookahead);
+  l = (int)mbrlen(s, 1, NULL);
+  if(l >= 0) return lookahead;
+  else if(l == -2) {
+    int i;
+    for(i = 1; i < MB_LEN_MAX; i++) {
+      s[i] = zgetc(z);
+      l = (int)mbrlen(s, i+1, NULL);
+      if(l == 0) return 0;
+      else if(l > 0) {
+        wchar_t c;
+        if(mbrtowc(&c, s, cast(size_t, l), NULL) == cast(size_t, l))
+          return cast(int, c);
+        else
+          break;
+      }
+      else if(l == -1) break;
+    }
+  }
+  return '?';
+}
+#define next(ls) (ls->current = mbnext(ls->z, zgetc(ls->z)))
 
 
 
@@ -51,14 +78,19 @@ static l_noret lexerror (LexState *ls, const char *msg, int token);
 
 static void save (LexState *ls, int c) {
   Mbuffer *b = ls->buff;
-  if (luaZ_bufflen(b) + 1 > luaZ_sizebuffer(b)) {
+  int n, i;
+  char s[MB_LEN_MAX+1];
+  memset(s, 0, sizeof(s));
+  n = (int)wcrtomb(s, cast(wchar_t, c), NULL);
+  if(n <= 0) n = 1;
+  if (luaZ_bufflen(b) + n > luaZ_sizebuffer(b)) {
     size_t newsize;
     if (luaZ_sizebuffer(b) >= MAX_SIZET/2)
       lexerror(ls, "lexical element too long", 0);
     newsize = luaZ_sizebuffer(b) * 2;
     luaZ_resizebuffer(ls->L, b, newsize);
   }
-  b->buffer[luaZ_bufflen(b)++] = cast(char, c);
+  for(i = 0; i < n; i++) b->buffer[luaZ_bufflen(b)++] = s[i];
 }
 
 
@@ -74,8 +106,10 @@ void luaX_init (lua_State *L) {
 
 const char *luaX_token2str (LexState *ls, int token) {
   if (token < FIRST_RESERVED) {  /* single-byte symbols? */
-    lua_assert(token == cast(unsigned char, token));
-    return (lisprint(token)) ? luaO_pushfstring(ls->L, LUA_QL("%c"), token) :
+    char s[MB_LEN_MAX+1];
+    memset(s, 0, sizeof(s));
+    wcrtomb(s, cast(wchar_t, token), NULL);
+    return (lisprint(token)) ? luaO_pushfstring(ls->L, LUA_QL("%s"), s) :
                               luaO_pushfstring(ls->L, "char(%d)", token);
   }
   else {
@@ -160,7 +194,7 @@ void luaX_setinput (lua_State *L, LexState *ls, ZIO *z, TString *source,
                     int firstchar) {
   ls->decpoint = '.';
   ls->L = L;
-  ls->current = firstchar;
+  ls->current = mbnext(z, firstchar);
   ls->lookahead.token = TK_EOS;  /* no look-ahead token */
   ls->z = z;
   ls->fs = NULL;
